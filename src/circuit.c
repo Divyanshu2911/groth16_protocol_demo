@@ -4,80 +4,106 @@
 #include <pbc/pbc.h>
 #include "../include/circuit.h"
 
+// src/circuit.c  (replace the whole build_r1cs with this)
 void build_r1cs(int d,
                 element_t *coeffs,
                 element_t x,
                 element_t y,
                 r1cs_t *r1cs,
                 element_t **wires,
-                pairing_t pairing) {
-    int n_pow  = d + 1;        // x^0 … x^d
-    int n_sum  = d + 1;        // partial sums s₀ … s_d
-    int n_vars = n_pow + n_sum;  
-    int n_cons = d        // xᶦ = x·xᶦ⁻¹
-                 + d      // sᵢ = sᵢ₋₁ + aᵢ·xᶦ
-                 + 1;     // final check
+                pairing_t pairing)
+{
+    // Layout:
+    // wires[0..d]     : w_i = x^i   (w0=1, w1=x, …, wd=x^d)
+    // wires[d+1..2d+1]: s_i partial sums (s0..sd)
+    int n_pow = d + 1;
+    int n_sum = d + 1;
+    int n_vars = n_pow + n_sum;
 
-    // 1) allocate and init wires
+    // Constraints:
+    // 1) s0 = a0 * w0                      -> 1
+    // 2) w_i * w1 = w_{i+1} for i=1..d-1   -> (d-1)
+    // 3) s_i = s_{i-1} + a_i * w_i for i=1..d -> d
+    // 4) s_d * 1 = y                       -> 1
+    int n_cons = (d > 0 ? (2 * d + 1) : 2);
+
+    // ---- wires (w^i and partial sums) ----
     *wires = malloc(sizeof(element_t) * n_vars);
-    for(int i = 0; i < n_vars; i++) {
+    for (int i = 0; i < n_vars; i++)
         element_init_Zr((*wires)[i], pairing);
+
+    // powers
+    element_set1((*wires)[0]); // w0 = 1
+    if (n_pow >= 2)
+        element_set((*wires)[1], x); // w1 = x
+    for (int i = 2; i < n_pow; i++)
+    {
+        element_mul((*wires)[i], (*wires)[i - 1], x); // wi = w_{i-1} * x
     }
 
-    // 2) compute powers: w₀=1, w₁=x, w₂=x², …
-    element_set1((*wires)[0]);
-    element_set((*wires)[1], x);
-    for(int i = 2; i < n_pow; i++) {
-        element_mul((*wires)[i], (*wires)[i-1], x);
-    }
-
-    // 3) compute partial sums: s₀ = a₀·w₀, sᵢ = sᵢ₋₁ + aᵢ·wᵢ
-    int off = n_pow;
+    // partial sums (computed just for printing/debug)
+    int off = n_pow; // start of s_i region
+    // s0 = a0 * w0
     element_mul((*wires)[off + 0], coeffs[0], (*wires)[0]);
-    for(int i = 1; i < n_sum; i++) {
-        element_mul((*wires)[off + i], coeffs[i], (*wires)[i]);
-        element_add((*wires)[off + i],
-                    (*wires)[off + i],
-                    (*wires)[off + i - 1]);
+    for (int i = 1; i < n_sum; i++)
+    { // i = 1..d
+        element_t term;
+        element_init_Zr(term, pairing);
+        element_mul(term, coeffs[i], (*wires)[i]);                   // a_i * w_i
+        element_add((*wires)[off + i], (*wires)[off + i - 1], term); // s_i = s_{i-1} + term
+        element_clear(term);
     }
 
-    // 4) allocate & zero‐init R1CS matrices
+    // ---- allocate R1CS A,B,C ----
     r1cs->n_vars = n_vars;
     r1cs->n_cons = n_cons;
-    r1cs->A = malloc(sizeof(element_t*) * n_cons);
-    r1cs->B = malloc(sizeof(element_t*) * n_cons);
-    r1cs->C = malloc(sizeof(element_t*) * n_cons);
-    for(int c = 0; c < n_cons; c++) {
+    r1cs->A = malloc(sizeof(element_t *) * n_cons);
+    r1cs->B = malloc(sizeof(element_t *) * n_cons);
+    r1cs->C = malloc(sizeof(element_t *) * n_cons);
+    for (int c = 0; c < n_cons; c++)
+    {
         r1cs->A[c] = malloc(sizeof(element_t) * n_vars);
         r1cs->B[c] = malloc(sizeof(element_t) * n_vars);
         r1cs->C[c] = malloc(sizeof(element_t) * n_vars);
-        for(int v = 0; v < n_vars; v++) {
+        for (int v = 0; v < n_vars; v++)
+        {
             element_init_Zr(r1cs->A[c][v], pairing);
-            element_init_Zr(r1cs->B[c][v], pairing);
-            element_init_Zr(r1cs->C[c][v], pairing);
             element_set0(r1cs->A[c][v]);
+            element_init_Zr(r1cs->B[c][v], pairing);
             element_set0(r1cs->B[c][v]);
+            element_init_Zr(r1cs->C[c][v], pairing);
             element_set0(r1cs->C[c][v]);
         }
     }
 
-    // 5) fill constraints
+    // ---- fill constraints ----
     int ci = 0;
-    //   a) x^i constraints: w_i * x = w_{i+1}
-    for(int i = 1; i < n_pow; i++, ci++) {
-        element_set1(r1cs->A[ci][i]);
-        element_set1(r1cs->B[ci][1]);
-        element_set1(r1cs->C[ci][i+1]);
+
+    // (1) s0 = a0 * w0  =>  (a0·w0) * 1 = s0
+    element_set(r1cs->A[ci][0], coeffs[0]); // a0 · w0
+    element_set1(r1cs->B[ci][0]);           // × 1 (wire w0 == 1)
+    element_set1(r1cs->C[ci][off + 0]);     // = s0
+    ci++;
+
+    // (2) power chain: w_i * w1 = w_{i+1} for i=1..d-1
+    for (int i = 1; i <= d - 1; i++, ci++)
+    {
+        element_set1(r1cs->A[ci][i]);     // w_i
+        element_set1(r1cs->B[ci][1]);     // × w1 (which is x)
+        element_set1(r1cs->C[ci][i + 1]); // = w_{i+1}
     }
-    //   b) sum constraints: s_{i-1} + (a_i·x^i) = s_i
-    for(int i = 1; i < n_sum; i++, ci++) {
+
+    // (3) sums: s_i = s_{i-1} + a_i·w_i   encoded as  (s_{i-1} + a_i·w_i) * 1 = s_i
+    for (int i = 1; i <= d; i++, ci++)
+    {
         element_set1(r1cs->A[ci][off + i - 1]); // s_{i-1}
-        element_set1(r1cs->A[ci][off + i]);     // a_i·x^i
-        element_set1(r1cs->B[ci][0]);           // ×1
-        element_set1(r1cs->C[ci][off + i]);     // s_i
+        element_set(r1cs->A[ci][i], coeffs[i]); // + a_i · w_i
+        element_set1(r1cs->B[ci][0]);           // × 1
+        element_set1(r1cs->C[ci][off + i]);     // = s_i
     }
-    //   c) final check: s_d * 1 = y
-    element_set1(r1cs->A[ci][off + d]);
-    element_set1(r1cs->B[ci][0]);
-    element_set(r1cs->C[ci][0], y);
+
+    // (4) final check: s_d * 1 = y (y lives as constant via w0 == 1)
+    element_set1(r1cs->A[ci][off + d]); // s_d
+    element_set1(r1cs->B[ci][0]);       // × 1
+    element_set(r1cs->C[ci][0], y);     // = y (since w0 == 1)
 }

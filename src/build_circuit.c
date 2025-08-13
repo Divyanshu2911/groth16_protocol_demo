@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <pbc/pbc.h>
 #include "../include/circuit.h"
+#include "../include/fmt.h"
 
 /*
 void build_r1cs(int d, element_t *coeffs, element_t x, element_t y,
@@ -75,30 +76,39 @@ void build_r1cs(int d, element_t *coeffs, element_t x, element_t y,
 }
 */
 
-int main(int argc, char **argv) {
-    if (argc < 5) {
+int main(int argc, char **argv)
+{
+    if (argc < 5)
+    {
         fprintf(stderr,
-            "Usage: %s a.param d x y a0 a1 … ad\n"
-            "  a.param : PBC parameter file (any path)\n"
-            "  d              : degree of the polynomial\n"
-            "  x              : evaluation point (in Zr)\n"
-            "  y              : claimed result y = ∑ a_i·x^i\n"
-            "  a0…ad          : coefficients in Zr\n",
-            argv[0]
-        );
+                "Usage: %s a.param d x y a0 a1 … ad\n"
+                "  a.param : PBC parameter file (any path)\n"
+                "  d              : degree of the polynomial\n"
+                "  x              : evaluation point (in Zr)\n"
+                "  y              : claimed result y = ∑ a_i·x^i\n"
+                "  a0…ad          : coefficients in Zr\n",
+                argv[0]);
         return 1;
     }
+    fmt_init(1, stdout);
+    fmt_banner("R1CS / Wire Assignment");
 
     // 1) Load the params file into a buffer
     const char *params_path = argv[1];
     FILE *fp = fopen(params_path, "r");
-    if (!fp) { perror("fopen a.param"); return 1; }
+    if (!fp)
+    {
+        perror("fopen a.param");
+        return 1;
+    }
     fseek(fp, 0, SEEK_END);
     long sz = ftell(fp);
     fseek(fp, 0, SEEK_SET);
     char *param_buf = malloc(sz + 1);
-    if (fread(param_buf, 1, sz, fp) != sz) {
-        perror("fread a.param"); return 1;
+    if (fread(param_buf, 1, sz, fp) != sz)
+    {
+        perror("fread a.param");
+        return 1;
     }
     param_buf[sz] = '\0';
     fclose(fp);
@@ -122,7 +132,8 @@ int main(int argc, char **argv) {
 
     // 4) Parse coefficients a0…ad
     element_t *coeffs = malloc((d + 1) * sizeof(element_t));
-    for (int i = 0; i <= d; i++) {
+    for (int i = 0; i <= d; i++)
+    {
         element_init_Zr(coeffs[i], pairing);
         element_set_str(coeffs[i], argv[argi++], 10);
     }
@@ -132,13 +143,10 @@ int main(int argc, char **argv) {
     element_t *wires;
     build_r1cs(d, coeffs, x, y, &r1cs, &wires, pairing);
 
-    printf("Built R1CS: %d variables, %d constraints\n",
-           r1cs.n_vars, r1cs.n_cons);
-
     // 6) Print all wire values
-    for (int i = 0; i < r1cs.n_vars; i++) {
-        element_printf("  wire[%d] = %B\n", i, wires[i]);
-    }
+    fmt_kv_i("variables", r1cs.n_vars);
+    fmt_kv_i("constraints", r1cs.n_cons);
+    fmt_vec_e("wires", wires, r1cs.n_vars);
 
     // Cleanup omitted for brevity
     return 0;
