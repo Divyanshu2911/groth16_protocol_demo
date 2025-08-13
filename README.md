@@ -1,5 +1,3 @@
-// ---------------------- README.md ----------------------
-/*
 # Groth16 Polynomial Demo
 
 ## Modules & Usage
