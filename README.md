@@ -19,4 +19,18 @@ make
    ```bash
    ./pot path/to/a.param [deg]
    ```
-*/
+
+4. **keygen**: Generates prover's and verifier's keys using pairing
+   ```bash
+   ./keygen path/to/a.param [deg] x y a0....ad
+   ```
+
+5. **prove**: Generates proof as proof_demo.bin
+   ```bash
+   ./prover path/to/a.param [deg] x y a0....ad
+   ```
+
+6. **verify**: Verifies the generated proof
+   ```bash
+   ./verifier path/to/a.param proof_demo.bin
+   ```
