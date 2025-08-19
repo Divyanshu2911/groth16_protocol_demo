@@ -2,10 +2,14 @@
 
 ## Modules & Usage
 
+### Compilation
+
 ```bash
 make clean
 make
 ```
+
+### Execution steps
 
 1. **build_circuit**: Constructs R1CS and prints wires
    ```bash
